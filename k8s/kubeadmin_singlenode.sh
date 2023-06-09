@@ -140,6 +140,10 @@ installCsiDriver()
     kubectl create namespace openebs
 
     helm --namespace=openebs install openebs openebs/openebs
+    
+    sleep 1
+
+    kubectl patch storageclass openebs-hostpath -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
 }
 
 echo "Installing general dependencies"

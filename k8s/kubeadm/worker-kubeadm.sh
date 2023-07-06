@@ -98,48 +98,10 @@ swapDisable()
     sudo sed -i -e '/swap/d' /etc/fstab
 }
 
-#Function to create the cluster using kubeadm
-createCluster()
-{
-    sudo kubeadm init --control-plane-endpoint "10.0.10.30:6443"  --upload-certs  --pod-network-cidr=10.244.0.0/16 --service-cidr 10.16.0.0/12
-}
-
-#Function to configure kubectl
-configureKubectl()
-{
-    mkdir -p $HOME/.kube
-    sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-    sudo chown $(id -u):$(id -g) $HOME/.kube/config
-}
-
-#Function to untaint node
-nodeUntain()
-{
-    kubectl taint nodes --all node-role.kubernetes.io/master-
-    kubectl taint nodes --all node-role.kubernetes.io/control-plane-
-}
-
 #Function to Install a CNI plugin
 installCniplugin()
 {
     kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
-}
-
-#Function to Install helm
-installHelm()
-{
-    curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
-}
-
-#Function to Install a CSI driver
-installCsiDriver()
-{
-    # Add openebs repo to helm
-    helm repo add openebs https://openebs.github.io/charts
-
-    kubectl create namespace openebs
-
-    helm --namespace=openebs install openebs openebs/openebs
 }
 
 echo "Installing general dependencies"
@@ -163,20 +125,5 @@ installKube
 echo "Ensuring swap is disabled"
 swapDisable
 
-#echo "Creating the cluster using kubeadm"
-#createCluster
-
-#echo "Configuring Kubectl"
-#configureKubectl
-
-#echo "Maintaining tained nodes"
-#nodeUntain
-
 echo "Installing CNI plugins"
 installCniplugin
-
-#echo "Installing Helm"
-#installHelm
-
-#echo "Installing OpenEBS SC with Default Configuration"
-#installCsiDriver

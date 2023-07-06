@@ -137,9 +137,7 @@ installCsiDriver()
     # Add openebs repo to helm
     helm repo add openebs https://openebs.github.io/charts
 
-    kubectl create namespace openebs
-
-    helm --namespace=openebs install openebs openebs/openebs
+    helm install openebs openebs/openebs --set localprovisioner.hostpathClass.isDefaultClass=true --namespace=openebs --create-namespace
 }
 
 echo "Installing general dependencies"

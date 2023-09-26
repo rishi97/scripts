@@ -1,0 +1,108 @@
+name: Deb package UI
+env:
+  NAME: "test"
+on: [ workflow_dispatch ]
+jobs:
+  script:
+    runs-on: ubuntu-latest
+    name: clone and create deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          repository: 'kubernetes/kubernetes'
+      - name: Installing make
+        run: sudo apt install make dpkg
+
+      - name: exporting env's and building deb's
+        run:  |  
+          export KUBE_GIT_MAJOR=1
+          export KUBE_GIT_COMMIT='855e7c48de7388eb330da0f8d9d2394ee818fb8d'
+          export KUBE_GIT_MINOR='28'
+          export KUBE_GIT_VERSION='v1.28.0-ckp'
+          export KUBE_GIT_TREE_STATE='clean'
+          make quick-release
+          ./_output/dockerized/bin/linux/amd64/kubeadm 
+
+      - name: Making Kubeadm Deb packages
+        shell: bash
+        run: |
+          mkdir -p kubeadm_1.28.0_amd64/usr/bin         
+          mkdir -p kubeadm_1.28.0_amd64/DEBIAN
+          cp _output/dockerized/bin/linux/amd64/kubeadm kubeadm_1.28.0_amd64/usr/bin/.
+          sudo chmod +x kubeadm_1.28.0_amd64/usr/bin/*
+          touch kubeadm_1.28.0_amd64/DEBIAN/control 
+          cat <<EOF > kubeadm_1.28.0_amd64/DEBIAN/control
+          Package: kubeadmckp
+          Version: 1.28.0
+          Maintainer: coredgeio 
+          Depends: libc6
+          Architecture: amd64
+          Description: kubeadm binary installation 
+          EOF
+          dpkg --build kubeadm_1.28.0_amd64
+
+      - name: Making Kubelet Deb packages
+        shell: bash
+        run: |
+          mkdir -p kubelet_1.28.0_amd64/usr/bin
+          
+          mkdir -p kubelet_1.28.0_amd64/DEBIAN
+          mkdir -p kubelet_1.28.0_amd64/etc/systemd/system
+
+          cp _output/dockerized/bin/linux/amd64/kubelet kubelet_1.28.0_amd64/usr/bin/.
+          sudo chmod +x  kubelet_1.28.0_amd64/usr/bin/*
+          touch kubelet_1.28.0_amd64/DEBIAN/control 
+          cat <<EOF > kubelet_1.28.0_amd64/DEBIAN/control
+          Package: kubeletckp 
+          Version: 1.28.0
+          Maintainer: coredgeio 
+          Depends: libc6
+          Architecture: amd64
+          Description: kubelet binary installation 
+          EOF
+          touch kubelet_1.28.0_amd64/etc/systemd/system/kubelet.service
+          touch kubelet_1.28.0_amd64/etc/systemd/system/rules
+
+          cat <<EOF > kubelet_1.28.0_amd64/etc/systemd/system/kubelet.service
+          [Unit]
+          #Description=kubelet service
+          Description=kubelet: The Kubernetes Node Agent
+          Documentation=https://kubernetes.io/docs/home/
+          #StartLimitIntervalSec=0
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
+          Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
+          # This is a file that "kubeadm init" and "kubeadm join" generates at runtime, populating the KUBELET_KUBEADM_ARGS variable dynamically
+          EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
+          # This is a file that the user can use for overrides of the kubelet args as a last resort. Preferably, the user should use
+          # the .NodeRegistration.KubeletExtraArgs object in the configuration files instead. KUBELET_EXTRA_ARGS should be sourced from this file.
+          EnvironmentFile=-/etc/default/kubelet
+          ExecStart=
+          ExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_KUBEADM_ARGS $KUBELET_EXTRA_ARGS
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          cat <<EOF > kubelet_1.28.0_amd64/etc/systemd/system/rules
+          #!/usr/bin/make -f 
+          %:
+            dh @ --with=systemd
+          override_dh_installinit:
+            dh_installinit --name=kubelet.service
+          EOF
+          dpkg --build kubelet_1.28.0_amd64
+      - name: upload_artifacts
+        uses: actions/upload-artifact@v3
+        with: 
+          name: debpackage
+          path: |
+            kubeadm_1.28.0_amd64.deb
+            kubelet_1.28.0_amd64.deb
+
+
+        

@@ -1,4 +1,4 @@
-name: Deb package UI
+name: Deb package build CI
 env:
   NAME: "test"
 on: [ workflow_dispatch ]

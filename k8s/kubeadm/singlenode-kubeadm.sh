@@ -14,9 +14,9 @@ installContainerd()
     curl -fsSLo containerd-config.toml https://gist.githubusercontent.com/oradwell/31ef858de3ca43addef68ff971f459c2/raw/5099df007eb717a11825c3890a0517892fa12dbf/containerd-config.toml
     sudo mkdir /etc/containerd
     sudo mv containerd-config.toml /etc/containerd/config.toml
-    curl -fsSLo containerd-1.6.14-linux-amd64.tar.gz https://github.com/containerd/containerd/releases/download/v1.6.14/containerd-1.6.14-linux-amd64.tar.gz
+    curl -fsSLo containerd-1.6.14-linux-amd64.tar.gz https://github.com/containerd/containerd/releases/download/v1.6.25/containerd-1.6.25-linux-amd64.tar.gz
     # Extract the binaries
-    sudo tar Cxzvf /usr/local containerd-1.6.14-linux-amd64.tar.gz
+    sudo tar Cxzvf /usr/local containerd-1.6.25-linux-amd64.tar.gz
 
     # Install containerd as a service
     sudo curl -fsSLo /etc/systemd/system/containerd.service https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
@@ -28,23 +28,22 @@ installContainerd()
 #Function to Install runc
 installRunc()
 {
-    curl -fsSLo runc.amd64 https://github.com/opencontainers/runc/releases/download/v1.1.3/runc.amd64
+    curl -fsSLo runc.amd64 https://github.com/opencontainers/runc/releases/download/v1.1.10/runc.amd64
     sudo install -m 755 runc.amd64 /usr/local/sbin/runc
 }
 
 #Function to Install CNI network plugins
 installCniNetworkPlugins()
 {
-    curl -fsSLo cni-plugins-linux-amd64-v1.1.1.tgz https://github.com/containernetworking/plugins/releases/download/v1.1.1/cni-plugins-linux-amd64-v1.1.1.tgz
+    curl -fsSLo cni-plugins-linux-amd64-v1.3.0.tgz https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
     sudo mkdir -p /opt/cni/bin
-    sudo tar -C /opt/cni/bin -xzvf cni-plugins-linux-amd64-v1.1.1.tgz
+    sudo tar -C /opt/cni/bin -xzvf cni-plugins-linux-amd64-v1.3.0.tgz
 }
 
 #Function to forward IPv4 and let iptables see bridged network traffic
 forwardIpv4()
 {
-    cat <<EOF |
-    sudo tee /etc/modules-load.d/k8s.conf
+    cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
     overlay
     br_netfilter
 EOF
@@ -79,10 +78,10 @@ EOF
     # Fetch package list
     sudo apt-get update
 
-    sudo apt-get install -y kubelet=1.25.4-00 kubeadm=1.25.4-00 kubectl=1.25.4-00
+    sudo apt-get install -y kubelet=1.27.6-00 kubeadm=1.27.6-00 kubectl=1.27.6-00
 
     # Prevent them from being updated automatically
-    sudo apt-mark hold kubelet=1.25.4-00 kubeadm=1.25.4-00 kubectl=1.25.4-00
+    sudo apt-mark hold kubelet=1.27.6-00 kubeadm=1.27.6-00 kubectl=11.27.6-00
 }
 
 #Function to ensure swap is disabled
@@ -101,7 +100,7 @@ swapDisable()
 #Function to create the cluster using kubeadm
 createCluster()
 {
-    sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+    sudo kubeadm init --pod-network-cidr=10.244.0.0/16 --upload-certs
 }
 
 #Function to configure kubectl
@@ -136,8 +135,52 @@ installCsiDriver()
 {
     # Add openebs repo to helm
     helm repo add openebs https://openebs.github.io/charts
+    helm repo update
 
     helm install openebs openebs/openebs --set localprovisioner.hostpathClass.isDefaultClass=true --namespace=openebs --create-namespace
+}
+
+#Install MetalLB as BGP ControlPlan/LB
+installMetalLB()
+{
+    kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.12/config/manifests/metallb-native.yaml
+}
+
+#Configure MetalLB for IP Pools and L2 Adv
+configureMetalLB()
+{
+    nodeIP=`kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'`
+    
+    kubectl apply -f - <<EOF
+    apiVersion: metallb.io/v1beta1
+    kind: IPAddressPool
+    metadata:
+        name: ingress-pool
+        namespace: metallb-system
+    spec:
+        addresses:
+        - $nodeIP-$nodeIP
+    ---
+    apiVersion: metallb.io/v1beta1
+    kind: L2Advertisement
+    metadata:
+        name: ingress-pool-l2
+        namespace: metallb-system
+    spec:
+        ipAddressPools:
+        - ingress-pool
+EOF
+}
+
+#Install ingress-nginx controller
+installIngressNginx()
+{
+    # Add ingress-nginx repo to helm
+    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+    helm repo update
+
+    #helm install openebs openebs/openebs --set localprovisioner.hostpathClass.isDefaultClass=true --namespace=openebs --create-namespace
+    helm install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace
 }
 
 echo "Installing general dependencies"
@@ -176,5 +219,26 @@ installCniplugin
 echo "Installing Helm"
 installHelm
 
-echo "Installing OpenEBS SC with Default Configuration"
-installCsiDriver
+echo "Install OpenEBS Storage Class? (Y/N)"
+if [ "$user_input" == "Y" ] || [ "$user_input" == "y" ]; then
+    echo "Installing OpenEBS SC with Default Configuration..."
+    installCsiDriver
+else
+    exit 0
+fi
+
+echo "Install MetalLB and Ingress Nginx Controller? (Y/N)"
+read user_input
+if [ "$user_input" == "Y" ] || [ "$user_input" == "y" ]; then
+    echo "Installing MetalLB.."
+    installMetalLB
+    echo "Configuring MetalLB.."
+    configureMetalLB
+    echo "Installing Ingress Nginx Controller.."
+    installIngressNginx
+elif [ "$user_input" == "N" ] || [ "$user_input" == "n" ]; then
+    echo "Not installing anything!"
+    exit 0
+else
+    exit 0
+fi

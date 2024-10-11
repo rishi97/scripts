@@ -15,7 +15,7 @@ COMMIT_FILE_BASE_DIR="./auto-helm-deploy-git/commit_hashes"
 
 OCI_CHART_BASE=""
 
-# Directory where the commit files exist or will be stored for each app
+# Ensure the directory for commit files exists
 mkdir -p "$COMMIT_FILE_BASE_DIR"
 
 # Clone the repo if it hasn't been cloned yet
@@ -28,22 +28,47 @@ if [ ! -d "$REPO_DIR/.git" ]; then
   fi
 fi
 
+# Navigate to the repository directory
 cd "$REPO_DIR" || exit 1
 
 # Fetch and pull the latest changes
 git fetch origin
 git pull origin main
 
+# Function to check if a Helm release upgrade is in progress
+check_helm_upgrade_in_progress() {
+  local release_name=$1
+  helm status "$release_name" --namespace "$NAMESPACE" > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    echo "Release $release_name not found in namespace $NAMESPACE. Skipping."
+    return 1
+  fi
+
+  # Check the status of the Helm release
+  STATUS=$(helm status "$release_name" --namespace "$NAMESPACE" -o json | jq -r .info.status)
+  if [[ "$STATUS" == "pending-upgrade" ]]; then
+    echo "Helm upgrade is already in progress for $release_name. Skipping upgrade."
+    return 1
+  fi
+  return 0
+}
+
 # Iterate through each application in the list
 for APP in "${APPS[@]}"; do
   echo "Processing application: $APP"
 
-  # Set the override values file for the current app
+  # Set the values for the current app
   VALUES_FILE_NAME="$APP-values-override.yaml"
   VALUES_FILE_PATH="$REPO_DIR/$VALUES_FILE_NAME"
   RELEASE_NAME="$APP"
   OCI_CHART="$OCI_CHART_BASE$APP-ha"
   COMMIT_FILE="$COMMIT_FILE_BASE_DIR/${APP}_last_commit_hash.txt"
+
+  # Check if a Helm upgrade is already in progress for the app
+  check_helm_upgrade_in_progress "$RELEASE_NAME"
+  if [ $? -ne 0 ]; then
+    continue  # Skip this application if an upgrade is in progress
+  fi
 
   # Get the latest commit for the values file
   LATEST_COMMIT=$(git log -n 1 --pretty=format:"%H" -- "$VALUES_FILE_PATH")

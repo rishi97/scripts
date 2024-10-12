@@ -1,17 +1,23 @@
 #!/bin/bash
 
-# List of applications to upgrade in the order
-APPS=("abc" "xyz" "fgh" "integrations")
+# List of release names (These are the Helm release names)
+APP_RELEASE_NAME=("keycloak" "integrations")
+
+# Corresponding chart names (These are the Helm chart names in the OCI repository)
+CHART_NAMES=("keycloak-ha" "integrations")
+
+# The source path in the repository for override values files for one client and environment (client-name/env)
+APP_OVERRIDE_SOURCE_PATH=""  # Only one client environment at a time
 
 # Common variables
-REPO_URL="" ## Format organisation/repo-name
-REPO_DIR="" ## Directory where the deployment repository will be cloned
-NAMESPACE=""
+SOURCE_REPO_URL="" ## Format organisation/repo-name
+HOST_REPO_DIR="/home/ubuntu/auto-helm-deploy" ## Directory where the deployment repository will be cloned
+NAMESPACE="testing" ## The namespace where the Helm releases will be installed
 
 GIT_USERNAME=""
 GIT_TOKEN=""
 
-COMMIT_FILE_BASE_DIR="./auto-helm-deploy-git/commit_hashes"
+COMMIT_FILE_BASE_DIR="/home/ubuntu/auto-helm-deploy-git/commit_hashes"
 
 OCI_CHART_BASE=""
 
@@ -19,9 +25,9 @@ OCI_CHART_BASE=""
 mkdir -p "$COMMIT_FILE_BASE_DIR"
 
 # Clone the repo if it hasn't been cloned yet
-if [ ! -d "$REPO_DIR/.git" ]; then
+if [ ! -d "$HOST_REPO_DIR/.git" ]; then
   echo "Cloning the repository for the first time..."
-  git clone "https://$GIT_USERNAME:$GIT_TOKEN@github.com/$REPO_URL" "$REPO_DIR"
+  git clone "https://$GIT_USERNAME:$GIT_TOKEN@github.com/$SOURCE_REPO_URL" "$HOST_REPO_DIR"
   if [ $? -ne 0 ]; then
     echo "Error: Failed to clone the repository."
     exit 1
@@ -29,45 +35,36 @@ if [ ! -d "$REPO_DIR/.git" ]; then
 fi
 
 # Navigate to the repository directory
-cd "$REPO_DIR" || exit 1
+cd "$HOST_REPO_DIR" || exit 1
 
 # Fetch and pull the latest changes
 git fetch origin
 git pull origin main
 
-# Function to check if a Helm release upgrade is in progress
-check_helm_upgrade_in_progress() {
-  local release_name=$1
-  helm status "$release_name" --namespace "$NAMESPACE" > /dev/null 2>&1
-  if [ $? -ne 0 ]; then
-    echo "Release $release_name not found in namespace $NAMESPACE. Skipping."
-    return 1
-  fi
+# Check if the length of both arrays is the same
+if [ ${#APP_RELEASE_NAME[@]} -ne ${#CHART_NAMES[@]} ]; then
+  echo "Error: The number of app release names and chart names do not match."
+  exit 1
+fi
 
-  # Check the status of the Helm release
-  STATUS=$(helm status "$release_name" --namespace "$NAMESPACE" -o json | jq -r .info.status)
-  if [[ "$STATUS" == "pending-upgrade" ]]; then
-    echo "Helm upgrade is already in progress for $release_name. Skipping upgrade."
-    return 1
-  fi
-  return 0
-}
+# Iterate through each app release name and its corresponding chart
+for i in "${!APP_RELEASE_NAME[@]}"; do
+  APP="${APP_RELEASE_NAME[$i]}"
+  CHART="${CHART_NAMES[$i]}"
 
-# Iterate through each application in the list
-for APP in "${APPS[@]}"; do
-  echo "Processing application: $APP"
+  echo "Processing application: $APP with chart: $CHART"
 
   # Set the values for the current app
-  VALUES_FILE_NAME="$APP-values-override.yaml"
-  VALUES_FILE_PATH="$REPO_DIR/$VALUES_FILE_NAME"
+  VALUES_FILE_NAME="${APP}-override-values.yaml"
+  VALUES_FILE_PATH="$HOST_REPO_DIR/$APP_OVERRIDE_SOURCE_PATH/$VALUES_FILE_NAME"
   RELEASE_NAME="$APP"
-  OCI_CHART="$OCI_CHART_BASE$APP-ha"
-  COMMIT_FILE="$COMMIT_FILE_BASE_DIR/${APP}_last_commit_hash.txt"
+  OCI_CHART="$OCI_CHART_BASE$CHART"
+  COMMIT_FILE="$COMMIT_FILE_BASE_DIR/${RELEASE_NAME}_last_commit_hash.txt"
 
-  # Check if a Helm upgrade is already in progress for the app
-  check_helm_upgrade_in_progress "$RELEASE_NAME"
-  if [ $? -ne 0 ]; then
-    continue  # Skip this application if an upgrade is in progress
+  # Check if the values file exists
+  if [ ! -f "$VALUES_FILE_PATH" ]; then
+    echo "Error: Values file not found for $APP in $APP_OVERRIDE_SOURCE_PATH at $VALUES_FILE_PATH."
+    exit 1
   fi
 
   # Get the latest commit for the values file
@@ -80,11 +77,11 @@ for APP in "${APPS[@]}"; do
 
   # Check if a previous commit exists
   if [ ! -f "$COMMIT_FILE" ]; then
-    echo "No previous commit found for $APP, saving the current commit hash."
+    echo "No previous commit found for $APP in $APP_OVERRIDE_SOURCE_PATH, saving the current commit hash."
     echo "$LATEST_COMMIT" > "$COMMIT_FILE"
     helm upgrade "$RELEASE_NAME" "$OCI_CHART" --namespace "$NAMESPACE" -f "$VALUES_FILE_PATH"
     if [ $? -ne 0 ]; then
-      echo "Error: Helm upgrade failed for $APP."
+      echo "Error: Helm upgrade failed for $APP in $APP_OVERRIDE_SOURCE_PATH."
       exit 1
     fi
     continue
@@ -95,20 +92,20 @@ for APP in "${APPS[@]}"; do
 
   # Compare the latest commit with the last commit
   if [ "$LATEST_COMMIT" != "$LAST_COMMIT" ]; then
-    echo "New commit detected in $VALUES_FILE_PATH for $APP! Updating Helm release..."
-    
+    echo "New commit detected in $VALUES_FILE_PATH for $APP in $APP_OVERRIDE_SOURCE_PATH! Updating Helm release..."
+
     helm upgrade "$RELEASE_NAME" "$OCI_CHART" --namespace "$NAMESPACE" -f "$VALUES_FILE_PATH"
-    
+
     if [ $? -ne 0 ]; then
-      echo "Error: Helm upgrade failed for $APP."
+      echo "Error: Helm upgrade failed for $APP in $APP_OVERRIDE_SOURCE_PATH."
       exit 1
     fi
 
     # Save the latest commit hash
     echo "$LATEST_COMMIT" > "$COMMIT_FILE"
   else
-    echo "No new commits detected in $VALUES_FILE_PATH for $APP. Helm upgrade not required."
+    echo "No new commits detected in $VALUES_FILE_PATH for $APP in $APP_OVERRIDE_SOURCE_PATH. Helm upgrade not required."
   fi
 done
 
-echo "All applications processed."
+echo "All applications processed for environment: $APP_OVERRIDE_SOURCE_PATH."

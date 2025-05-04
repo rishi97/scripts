@@ -1,0 +1,117 @@
+---
+- name: Install AMDGPU DKMS using ROCm repo (Ubuntu 22.04)
+  hosts: gpu_servers
+  become: true
+  gather_facts: yes
+
+  tasks:
+
+    - name: Create /etc/apt/keyrings directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download ROCm GPG key and convert to keyring
+      ansible.builtin.shell: |
+        wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | \
+        gpg --dearmor | tee /etc/apt/keyrings/rocm.gpg > /dev/null
+      args:
+        executable: /bin/bash
+      register: gpg_output
+      changed_when: true
+
+    - name: Show GPG output
+      ansible.builtin.debug:
+        var: gpg_output.stdout_lines
+
+    - name: Add AMDGPU apt source list (with i386 and amd64)
+      ansible.builtin.shell: |
+        echo "deb [arch=amd64,i386 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/amdgpu/6.3.3/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/amdgpu.list
+      args:
+        executable: /bin/bash
+      register: amdgpu_repo
+      changed_when: true
+
+    - name: Run apt update (after AMDGPU repo)
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Add ROCm apt source list
+      ansible.builtin.shell: |
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.3.3 jammy main" \
+        >> /etc/apt/sources.list.d/rocm.list
+      args:
+        executable: /bin/bash
+      register: rocm_repo
+      changed_when: true
+
+    - name: Set apt pin priority for ROCm packages
+      ansible.builtin.copy:
+        dest: /etc/apt/preferences.d/rocm-pin-600
+        content: |
+          Package: *
+          Pin: release o=repo.radeon.com
+          Pin-Priority: 600
+      register: pinning
+
+    - name: Run apt update again (after pinning)
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Install amdgpu-dkms
+      ansible.builtin.apt:
+        name: amdgpu-dkms
+        state: present
+      register: dkms_result
+      ignore_errors: true  # temporarily allow failure to see error
+
+    - name: Show amdgpu-dkms install result
+      ansible.builtin.debug:
+        var: dkms_result
+
+    - name: Reboot the server
+      reboot:
+        reboot_timeout: 600  # wait up to 10 minutes
+
+    - name: Wait until uptime is more than 1 minute
+      shell: |
+        awk '{print int($1)}' /proc/uptime
+      register: uptime
+      until: uptime.stdout | int > 60
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Install ROCm
+      apt:
+        name: rocm
+        state: present
+      register: rocm_result
+
+    - name: Show rocm install result
+      debug:
+        var: rocm_result
+
+    - name: Check GPUs with rocm-smi
+      shell: |
+        sudo rocm-smi
+
+    - name: Configure the system linker
+      shell: |
+        sudo tee --append /etc/ld.so.conf.d/rocm.conf <<EOF
+        /opt/rocm/lib
+        /opt/rocm/lib64
+        EOF
+        sudo ldconfig
+
+    - name: Update Alternatives
+      shell: |
+        update-alternatives --list rocm
+        export PATH=$PATH:/opt/rocm-6.3.3/bin
+        export LD_LIBRARY_PATH=/opt/rocm-6.3.3/lib
+
+    - name: Check kernel-mode driver
+      shell: |
+        dkms status

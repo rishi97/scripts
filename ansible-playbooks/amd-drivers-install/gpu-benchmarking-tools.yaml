@@ -1,0 +1,85 @@
+---
+- name: Install GPU validation and benchmarking dependencies + copy benchmark files
+  hosts: gpu_servers
+  become: true
+  gather_facts: yes
+
+  vars:
+    local_benchmark_dir: ./benchmark-tools
+    remote_target_dir: /home/ubuntu
+
+  tasks:
+
+    - name: Ensure Python build dependencies are installed
+      apt:
+        name:
+          - python3-setuptools
+          - python3-wheel
+        state: present
+        update_cache: yes
+
+    - name: Install ROCm validation suite
+      apt:
+        name: rocm-validation-suite
+        state: present
+
+    - name: Install libgtest-dev
+      apt:
+        name: libgtest-dev
+        state: present
+
+    - name: Install OpenMPI and related packages
+      apt:
+        name:
+          - openmpi-bin
+          - openmpi-common
+          - libopenmpi-dev
+        state: present
+
+    - name: Ensure remote directory exists
+      file:
+        path: "{{ remote_target_dir }}"
+        state: directory
+        mode: '0755'
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Copy TransferBench.tar.gz
+      copy:
+        src: "{{ local_benchmark_dir }}/TransferBench.tar.gz"
+        dest: "{{ remote_target_dir }}/TransferBench.tar.gz"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Copy rccl-tests.tar.gz
+      copy:
+        src: "{{ local_benchmark_dir }}/rccl-tests.tar.gz"
+        dest: "{{ remote_target_dir }}/rccl-tests.tar.gz"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Copy rocBLAS.tar.gz
+      copy:
+        src: "{{ local_benchmark_dir }}/rocBLAS.tar.gz"
+        dest: "{{ remote_target_dir }}/rocBLAS.tar.gz"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Copy BabelStream.tar.gz
+      copy:
+        src: "{{ local_benchmark_dir }}/BabelStream.tar.gz"
+        dest: "{{ remote_target_dir }}/BabelStream.tar.gz"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Copy Mi210 rvs configs
+      copy:
+        src: "{{ local_benchmark_dir }}/rvs-conf-Mi210.tar.gz"
+        dest: "{{ remote_target_dir }}/rvs-conf-Mi210.tar.gz"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'

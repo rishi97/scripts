@@ -1,0 +1,61 @@
+---
+- name: Install VAST NFS client on multiple hosts
+  hosts: nodes
+  become: yes
+  vars:
+    vastnfs_tarball: vastnfs-4.0.33.tar.xz
+    remote_tmp_dir: /tmp
+    vastnfs_src_dir: /tmp/vastnfs-4.0.33
+
+  tasks:
+
+    - name: Ensure required packages are installed
+      apt:
+        name:
+          - gcc
+          - make
+          - dpkg-dev
+          - debhelper
+          - autotools-dev
+          - linux-headers-{{ ansible_kernel }}
+        state: present
+        update_cache: yes
+
+    - name: Copy VAST NFS tarball to remote host
+      copy:
+        src: "./vast/{{ vastnfs_tarball }}"
+        dest: "{{ remote_tmp_dir }}/{{ vastnfs_tarball }}"
+        mode: '0644'
+
+    - name: Extract VAST NFS tarball
+      shell: tar xvf {{ vastnfs_tarball }}
+      args:
+        chdir: "{{ remote_tmp_dir }}"
+
+    - name: Build VAST NFS kernel module
+      shell: ./build.sh bin
+      args:
+        chdir: "{{ vastnfs_src_dir }}"
+
+    - name: Install built .deb packages
+      shell: apt install -y ./dist/*.deb
+      args:
+        chdir: "{{ vastnfs_src_dir }}"
+
+    - name: Run depmod and update-initramfs
+      shell: |
+        depmod -a
+        update-initramfs -u -k $(uname -r)
+      
+    - name: Reboot the server
+      reboot:
+        reboot_timeout: 600  # wait up to 10 minutes
+
+    - name: Wait until uptime is more than 1 minute
+      shell: |
+        awk '{print int($1)}' /proc/uptime
+      register: uptime
+      until: uptime.stdout | int > 60
+      retries: 30
+      delay: 10
+      changed_when: false

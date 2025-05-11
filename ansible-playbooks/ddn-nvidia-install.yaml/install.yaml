@@ -1,0 +1,114 @@
+---
+- name: Install MLNX OFED stack if NVIDIA driver is present
+  hosts: gpu_servers
+  become: true
+  gather_facts: yes
+  remote_user: ubuntu
+
+  vars:
+    mlnx_tgz_url: "http://172.26.5.8/MLNX_OFED_LINUX-24.10-2.1.8.0-ubuntu22.04-x86_64.tgz"
+    mlnx_tgz_name: "MLNX_OFED_LINUX-24.10-2.1.8.0-ubuntu22.04-x86_64.tgz"
+    mlnx_dir: "MLNX_OFED_LINUX-24.10-2.1.8.0-ubuntu22.04-x86_64"
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: true
+
+    - name: Install NVIDIA driver
+      apt:
+        name: nvidia-driver-570
+        state: present
+
+    - name: Reboot the server
+      reboot:
+        reboot_timeout: 600  # wait up to 10 minutes
+
+    - name: Wait until uptime is more than 1 minute
+      shell: |
+        awk '{print int($1)}' /proc/uptime
+      register: uptime
+      until: uptime.stdout | int > 60
+      retries: 30
+      delay: 10
+      changed_when: false
+      
+    - name: Check if nvidia-smi works
+      command: nvidia-smi
+      register: nvidia_smi
+      ignore_errors: true
+
+    - name: Fail if NVIDIA driver is not installed
+      fail:
+        msg: "NVIDIA driver not detected. Skipping MLNX installation."
+      when: nvidia_smi.rc != 0
+
+    - name: Update apt cache
+      apt:
+        update_cache: true
+      when: nvidia_smi.rc == 0
+
+    - name: Install build tools and headers
+      apt:
+        name:
+          - build-essential
+          - linux-headers-{{ ansible_kernel }}
+          - dkms
+          - pciutils
+          - ethtool
+        state: present
+      when: nvidia_smi.rc == 0
+
+    - name: Download MLNX OFED package using curl with --noproxy '*'
+      shell: |
+        curl -S -O {{ mlnx_tgz_url }} --noproxy '*'
+      args:
+        chdir: /tmp
+      when: nvidia_smi.rc == 0
+
+
+    - name: Extract MLNX OFED archive
+      unarchive:
+        src: "/tmp/{{ mlnx_tgz_name }}"
+        dest: /tmp/
+        remote_src: yes
+      when: nvidia_smi.rc == 0
+
+    - name: Install MLNX OFED
+      command: ./mlnxofedinstall --without-fw-update --force --without-32bit --add-kernel-support --without-dpdk
+      args:
+        chdir: "/tmp/{{ mlnx_dir }}"
+      register: ofed_install
+      ignore_errors: true
+      when: nvidia_smi.rc == 0
+
+    - name: Remove irdma module if loaded
+      shell: |
+        modprobe -r irdma
+        echo "blacklist irdma" | sudo tee /etc/modprobe.d/blacklist-irdma.conf
+        sudo update-initramfs -u
+      ignore_errors: true
+      when: nvidia_smi.rc == 0
+
+    - name: Restart openibd service
+      service:
+        name: openibd
+        state: restarted
+      when: nvidia_smi.rc == 0
+
+    - name: Install dev tools and libraries for DDN
+      apt:
+        name:
+          - libkeyutils-dev
+          - libmount1
+          - libmount-dev
+          - libyaml-dev
+          - libjson-c-dev
+          - libssl-dev
+          - module-assistant
+          - libreadline-dev
+          - linux-headers-generic
+          - libaio-dev
+          - fio
+        state: present
+      when: nvidia_smi.rc == 0

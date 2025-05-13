@@ -1,0 +1,17 @@
+ib_addresses:
+  gpu-node-01:
+    port1: 100.125.2.1
+    port2: 100.125.3.1
+  gpu-node-02:
+    port1: 100.125.2.2
+    port2: 100.125.3.2
+  gpu-node-03:
+    port1: 100.125.2.3
+    port2: 100.125.3.3
+  gpu-node-04:
+    port1: 100.125.2.4
+    port2: 100.125.3.4
+  gpu-node-05:
+    port1: 100.125.2.5
+    port2: 100.125.3.5
+  # ... all 30

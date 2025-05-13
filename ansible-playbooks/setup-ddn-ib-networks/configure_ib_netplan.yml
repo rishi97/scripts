@@ -1,0 +1,30 @@
+---
+- name: Configure Infiniband interfaces with Netplan
+  hosts: gpu_nodes
+  become: yes
+  remote_user: ubuntu
+  vars_files:
+    - vars/ib_ips.yml
+
+  tasks:
+    - name: Disable cloud-init network config permanently
+      copy:
+        dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+        content: |
+          network: {config: disabled}
+        mode: '0644'
+
+    - name: Generate Netplan config for IB ports
+      template:
+        src: templates/netplan_ib.j2
+        dest: /etc/netplan/90-ddn-infiniband.yaml
+        mode: '0644'
+
+    - name: Run 'netplan try' with timeout
+      shell: netplan try --timeout 10
+      register: try_result
+      ignore_errors: yes
+
+    - name: Fallback to 'netplan apply' if 'try' fails
+      shell: netplan apply
+      when: try_result.rc != 0

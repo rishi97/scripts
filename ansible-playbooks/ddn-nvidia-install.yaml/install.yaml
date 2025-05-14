@@ -109,6 +109,7 @@
           - libreadline-dev
           - linux-headers-generic
           - libaio-dev
+          - zlib1g-dev
           - fio
         state: present
       when: nvidia_smi.rc == 0
